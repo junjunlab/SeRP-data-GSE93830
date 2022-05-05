@@ -1,0 +1,53 @@
+# 1.qc raw-data
+mkdir -p 2.QC-data/raw-qc 2.QC-data/clean-qc
+fastqc -t 12 -q -o 2.QC-data/raw-qc/ 1.raw-data/*.gz
+multiqc 2.QC-data/raw-qc/* -o 2.QC-data/raw-qc/
+
+# 2.trim adaptors
+mkdir 3.trim-data
+
+for i in SRR5188601 SRR5188602 SRR5188603 SRR5188604 SRR5188613 SRR5188614 SRR5188615 SRR5188616;do cutadapt -j 10 -f fastq -a CTGTAGGCACCATCAATTCGTATGCCGTCTT -O 6 -m 20 -M 45 --discard-untrimmed -o 3.trim-data/${i}.trimmed.fq.gz 1.raw-data/${i}.fastq.gz;done
+
+fastqc -t 12 -q -o 2.QC-data/clean-qc/ 3.trim-data/*.gz
+multiqc 2.QC-data/clean-qc/* -o 2.QC-data/clean-qc/
+
+# 3.build index for rRNA/tRNA and genome
+mkdir rRNA-index tRNA-index genome-index bw1-genome-index
+
+bowtie2-build Saccharomyces-cerevisiae-rRNA.fasta rRNA-index/Saccharomyces-cerevisiae-rRNA
+bowtie2-build Saccharomyces-cerevisiae-tRNA.fasta tRNA-index/Saccharomyces-cerevisiae-tRNA
+bowtie2-build Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa genome-index/Saccharomyces_cerevisiae-genome
+bowtie-build Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa bw1-genome-index/Saccharomyces_cerevisiae-genome
+
+# 4.rm rtRNA contamination from fastq files
+mkdir 4.rmrtRNA-data
+
+for i in SRR5188601 SRR5188602 SRR5188603 SRR5188604 SRR5188613 SRR5188614 SRR5188615 SRR5188616;do bowtie2 -p 20 -x ./index/rRNA-index/Saccharomyces-cerevisiae-rRNA --un-gz 4.rmrRNA-data/${i}.rmrRNA.fq.gz -U 3.trim-data/${i}.trimmed.fq.gz -S 4.rmrRNA-data/null;done
+
+for i in SRR5188601 SRR5188602 SRR5188603 SRR5188604 SRR5188613 SRR5188614 SRR5188615 SRR5188616;do bowtie2 -p 20 -x ./index/tRNA-index/Saccharomyces-cerevisiae-tRNA --un-gz 4.rmrtRNA-data/${i}.rmtRNA.fq.gz -U 4.rmrtRNA-data/${i}.rmrRNA.fq.gz -S 4.rmrtRNA-data/null;done
+
+# 5.map to genome
+conda install tophat
+mkdir 5.map-data
+
+for i in SRR5188601 SRR5188602 SRR5188603 SRR5188604 SRR5188613 SRR5188614 SRR5188615 SRR5188616;do tophat2 -p 20 -a 4 -i 40 -I 2000 -g 1 --max-insertion-length 0 --max-deletion-length 0 --no-novel-juncs --no-convert-bam -G index/Saccharomyces_cerevisiae.R64-1-1.105.gtf -o 5.map-data/${i} ./index/genome-index/Saccharomyces_cerevisiae-genome 4.rmrRNA-data/${i}.rmrRNA.fq.gz;done
+
+# 6.map to genome with bowtie
+mkdir -p 5.map-data/bowtie-map-data
+
+for i in SRR5188601 SRR5188602 SRR5188603 SRR5188604 SRR5188613 SRR5188614 SRR5188615 SRR5188616;do bowtie -p 20 ./index/bw1-genome-index/Saccharomyces_cerevisiae-genome -m 1 -v 2 --best --strata <(zcat 4.rmrRNA-data/${i}.rmrRNA.fq.gz) 5.map-data/bowtie-map-data/${i}.map;done
+
+# 7.map to trancriptome
+mkdir trans-index
+mkdir 6.map-trans-data
+
+bowtie-build extened-CDS-seq.fa trans-index/extened-CDS-seq
+
+# for i in SRR5188601 SRR5188602 SRR5188603 SRR5188604 SRR5188613 SRR5188614 SRR5188615 SRR5188616;do bowtie -p 20 ./index/trans-index/extened-CDS-seq -m 1 -v 2 --best --strata <(zcat 4.rmrRNA-data/${i}.rmrRNA.fq.gz) -S |samtools sort -@ 20 -o 6.map-trans-data/${i}.sorted.bam;done
+
+for i in SRR5188601 SRR5188602 SRR5188603 SRR5188604 SRR5188613 SRR5188614 SRR5188615 SRR5188616;do bowtie -p 20 ./index/trans-index/extened-CDS-seq -m 1 -v 2 --best --strata <(zcat 4.rmrtRNA-data/${i}.rmtRNA.fq.gz) 6.map-trans-data/${i}.map;done
+
+
+
+
+
